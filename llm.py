@@ -34,7 +34,8 @@ except Exception as e:
     logger.error(f"Failed to configure Gemini: {str(e)}")
 
 # Configure OpenAI (GPT)
-openai_client = AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY').strip())
+def use_openai():
+    return AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY').strip())
 
 # Configure Anthropic (Claude)
 claude_client = anthropic.AsyncAnthropic(api_key=os.getenv('ANTHROPIC_API_KEY').strip())
@@ -77,7 +78,7 @@ def get_model_instance(model_name):
     if model_name.startswith("gemini"):
         return genai.GenerativeModel(model_name)
     elif model_name in ["gpt-4o-mini", "gpt-3.5-turbo", "gpt-4"]:
-        return openai_client
+        return use_openai()
     elif model_name in ["claude-3-haiku", "claude-3-opus", "claude-3-sonnet"]:
         return claude_client
     elif "llama" in model_name:
@@ -173,7 +174,7 @@ async def generate_response(messages, model, session_id):
                     # If all retries failed or it's not an overload error, try GPT-4
                     logger.info("Falling back to GPT-4 model")
                     try:
-                        completion = await openai_client.chat.completions.create(
+                        completion = await use_openai().chat.completions.create(
                             model="gpt-4",
                             messages=[{"role": "user", "content": content}],
                             stream=True,
@@ -208,7 +209,7 @@ async def generate_response(messages, model, session_id):
         else:
             logger.warning(f"Unsupported model: {model}, falling back to GPT-4")
             try:
-                completion = await openai_client.chat.completions.create(
+                completion = await use_openai().chat.completions.create(
                     model="gpt-4",
                     messages=[{"role": "user", "content": content}],
                     stream=True,
