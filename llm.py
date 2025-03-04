@@ -8,8 +8,6 @@ import fireworks.client as fireworks
 import groq
 from langchain.memory import ConversationBufferMemory
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
-import asyncio
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -26,16 +24,10 @@ logger.debug(f"Fireworks API Key: {os.getenv('FIREWORKS_API_KEY')}")
 logger.debug(f"Groq API Key: {os.getenv('GROQ_API_KEY')}")
 
 # Configure Gemini AI
-try:
-    genai.configure(api_key=os.getenv('GOOGLE_API_KEY', '').strip())
-    # Initialize default model once
-    default_gemini = genai.GenerativeModel('gemini-1.0-pro')  # Use correct model name
-except Exception as e:
-    logger.error(f"Failed to configure Gemini: {str(e)}")
+genai.configure(api_key=os.getenv('GOOGLE_API_KEY').strip())
 
 # Configure OpenAI (GPT)
-def use_openai():
-    return AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY').strip())
+openai_client = AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY').strip())
 
 # Configure Anthropic (Claude)
 claude_client = anthropic.AsyncAnthropic(api_key=os.getenv('ANTHROPIC_API_KEY').strip())
@@ -49,14 +41,6 @@ groq_client = groq.Client(api_key=os.getenv('GROQ_API_KEY').strip())
 # Add a global conversation memory dictionary to store memories for different sessions
 conversation_memories = {}
 
-# Define model mappings
-MODEL_MAPPINGS = {
-    "gpt-4o-mini": "gpt-4o-mini",
-    "gemini-flash-2.0": "gemini-1.5-flash",
-    "claude-3.5-haiku": "claude-3-5-haiku-20241022",
-    "llama-3.3": "accounts/fireworks/models/llama-v2-70b"
-}
-
 def get_or_create_memory(session_id):
     """Get or create a conversation memory for a session."""
     if not session_id:
@@ -69,169 +53,116 @@ def get_or_create_memory(session_id):
     return conversation_memories[session_id]
 
 def get_model_instance(model_name):
-    """Get the appropriate model client based on the model name."""
-    # Normalize model name using mappings if present
-    model_name = MODEL_MAPPINGS.get(model_name, model_name)
-    
-    logger.debug(f"Getting model instance for: {model_name}")
-    
-    if model_name.startswith("gemini"):
-        return genai.GenerativeModel(model_name)
-    elif model_name in ["gpt-4o-mini", "gpt-3.5-turbo", "gpt-4"]:
-        return use_openai()
-    elif model_name in ["claude-3-haiku", "claude-3-opus", "claude-3-sonnet"]:
+    if model_name == "gemini-1.5-flash":
+        return genai.GenerativeModel('gemini-1.5-flash')  # Updated to cheapest Gemini
+    elif model_name == "gpt-4o-mini":
+        return openai_client
+    elif model_name == "claude-3-haiku-20240307":
         return claude_client
-    elif "llama" in model_name:
+    elif model_name == "llama-v3p1-8b-instruct":
         return fireworks
-    elif model_name.startswith("groq"):
-        return groq_client
     else:
-        logger.warning(f"Unknown model: {model_name}, defaulting to gemini-pro")
-        return genai.GenerativeModel('gemini-pro')
+        raise ValueError(f"Unsupported model: {model_name}")
 
-# Add this helper function
-async def handle_claude_response(model, messages, max_tokens=1000):
-    @retry(
-        stop=stop_after_attempt(3),  # Try 3 times
-        wait=wait_exponential(multiplier=1, min=4, max=10),  # Wait between attempts
-        retry=retry_if_exception_type((Exception))
-    )
-    async def _make_request():
-        try:
-            return await claude_client.messages.create(
-                model=model,
+async def generate_response(messages, model_name, session_id=None):
+    try:
+        logger.info(f"Generating response with model: {model_name}, session_id: {session_id}")
+        model = get_model_instance(model_name)
+        memory = get_or_create_memory(session_id)
+        language = 'en-US'
+        for msg in messages:
+            if msg['role'] == 'system':
+                if 'Respond in' in msg['content']:
+                    language = msg['content'].split('Respond in')[1].split('.')[0].strip()
+                    break
+
+        buffer = ""
+        MIN_CHUNK_SIZE = 50
+        PUNCTUATION_MARKS = ['.', '!', '?', '\n']
+        
+        if model_name == "gemini-1.5-flash":
+            prompt = f"You must respond in {language}. Maintain the same language throughout the response. "
+            if 'hi' in language.lower():
+                prompt += "Use Hindi script (Devanagari) for Hindi responses. "
+            
+            if memory:
+                for msg in memory.chat_memory.messages:
+                    if isinstance(msg, HumanMessage):
+                        prompt += f"\nUser: {msg.content}"
+                    elif isinstance(msg, AIMessage):
+                        prompt += f"\nAssistant: {msg.content}"
+            
+            prompt += f"\nUser: {messages[-1]['content']}\nAssistant:"
+            
+            response = model.generate_content(prompt)
+            if memory:
+                memory.chat_memory.add_user_message(messages[-1]['content'])
+                memory.chat_memory.add_ai_message(response.text)
+            yield response.text
+
+        elif model_name == "gpt-4o-mini":
+            lang_message = {
+                "role": "system",
+                "content": f"You must respond in {language}. If the user speaks in Hindi, respond in Hindi using Devanagari script. Maintain consistent language throughout."
+            }
+            messages.insert(0, lang_message)
+            
+            response = await model.chat.completions.create(
+                model=model_name,
                 messages=messages,
-                max_tokens=max_tokens,
                 stream=True
             )
-        except Exception as e:
-            if "overloaded" in str(e).lower():
-                logger.warning(f"Claude API overloaded, retrying... {str(e)}")
-                await asyncio.sleep(2)  # Wait 2 seconds before retry
-                raise  # Raise to trigger retry
-            raise  # Re-raise other exceptions
 
-    return await _make_request()
+            async for chunk in response:
+                if chunk.choices[0].delta.content:
+                    buffer += chunk.choices[0].delta.content
+                    if any(buffer.endswith(p) for p in PUNCTUATION_MARKS) and len(buffer.strip()) >= MIN_CHUNK_SIZE:
+                        yield buffer
+                        buffer = ""
+            if buffer.strip():
+                yield buffer
 
-async def generate_response(messages, model, session_id):
-    """Generate a streaming response based on the model selected."""
-    try:
-        memory = get_or_create_memory(session_id)
-        current_message = messages[-1] if messages else None
-        
-        if not current_message:
-            logger.warning("No current message found")
-            yield "Error: No message provided"
-            return
+        elif model_name == "claude-3-haiku-20240307":
+            response = await model.messages.create(
+                model="claude-3-haiku-20240307",  # Explicitly use this cheaper model
+                messages=messages,
+                max_tokens=1000,
+                stream=True
+            )
             
-        content = current_message["content"].strip()
-        if not content:
-            logger.warning("Empty message content received")
-            yield "Error: Empty message content"
-            return
-        
-        # Normalize model name using mappings if present
-        mapped_model = MODEL_MAPPINGS.get(model, model)
-        logger.info(f"Generating response with model: {model} (mapped to: {mapped_model})")
-        
-        # Handle Gemini models
-        if mapped_model in ["gemini-pro", "gemini-1.5-flash"]:
-            try:
-                # Use correct model name for Gemini
-                model_name = "gemini-1.0-pro" if mapped_model == "gemini-pro" else mapped_model
-                gemini_model = genai.GenerativeModel(model_name)
-                response = gemini_model.generate_content(content, stream=True)
-                for chunk in response:
-                    if hasattr(chunk, 'text'):
-                        yield chunk.text
-            except Exception as e:
-                logger.error(f"Gemini model error: {str(e)}")
-                yield f"Error with Gemini model: {str(e)}"
+            async for chunk in response:
+                if hasattr(chunk, 'delta') and chunk.delta.text:
+                    buffer += chunk.delta.text
+                    if any(buffer.endswith(p) for p in PUNCTUATION_MARKS) and len(buffer.strip()) >= MIN_CHUNK_SIZE:
+                        yield buffer
+                        buffer = ""
+            if buffer.strip():
+                yield buffer
 
-        # Handle Claude models with retries
-        elif mapped_model == "claude-3-5-haiku-20241022":
-            max_retries = 3
-            retry_count = 0
-            while retry_count < max_retries:
-                try:
-                    response = await claude_client.messages.create(
-                        model=mapped_model,
-                        messages=[{"role": "user", "content": content}],
-                        max_tokens=1000,
-                        stream=True
-                    )
-                    async for chunk in response:
-                        if chunk.delta.text:
-                            yield chunk.delta.text
-                    break  # If successful, break the retry loop
-                except Exception as e:
-                    retry_count += 1
-                    logger.warning(f"Claude attempt {retry_count} failed: {str(e)}")
-                    if "overloaded" in str(e).lower():
-                        if retry_count < max_retries:
-                            await asyncio.sleep(2 ** retry_count)  # Exponential backoff
-                            continue
-                    # If all retries failed or it's not an overload error, try GPT-4
-                    logger.info("Falling back to GPT-4 model")
-                    try:
-                        completion = await use_openai().chat.completions.create(
-                            model="gpt-4",
-                            messages=[{"role": "user", "content": content}],
-                            stream=True,
-                            max_tokens=1000
-                        )
-                        async for chunk in completion:
-                            if chunk.choices[0].delta.content:
-                                yield chunk.choices[0].delta.content
-                        break
-                    except Exception as fallback_e:
-                        logger.error(f"Fallback GPT-4 error: {str(fallback_e)}")
-                        yield f"Error: All models failed. Please try again later."
-                        break
+        elif model_name == "llama-v3p1-8b-instruct":
+            response = model.ChatCompletion.create(
+                model="accounts/fireworks/models/llama-v3p1-8b-instruct",  # Full Fireworks model path
+                messages=messages,
+                stream=True
+            )
+            
+            async for chunk in response:
+                if chunk.choices[0].delta.content:
+                    buffer += chunk.choices[0].delta.content
+                    if any(buffer.endswith(p) for p in PUNCTUATION_MARKS) and len(buffer.strip()) >= MIN_CHUNK_SIZE:
+                        yield buffer
+                        buffer = ""
+            if buffer.strip():
+                yield buffer
 
-        # Handle Llama models
-        elif "llama" in mapped_model:
-            try:
-                response = fireworks.ChatCompletion.create(
-                    model="accounts/fireworks/models/llama-v2-70b",
-                    messages=[{"role": "user", "content": content}],
-                    stream=True,
-                    max_tokens=1000
-                )
-                for chunk in response:
-                    if chunk.choices[0].delta.content:
-                        yield chunk.choices[0].delta.content
-            except Exception as e:
-                logger.error(f"Llama model error: {str(e)}")
-                yield f"Error with Llama model: {str(e)}"
-                
-        # Handle unknown models with fallback to GPT-4
         else:
-            logger.warning(f"Unsupported model: {model}, falling back to GPT-4")
-            try:
-                completion = await use_openai().chat.completions.create(
-                    model="gpt-4",
-                    messages=[{"role": "user", "content": content}],
-                    stream=True,
-                    max_tokens=1000
-                )
-                async for chunk in completion:
-                    if chunk.choices[0].delta.content:
-                        yield chunk.choices[0].delta.content
-            except Exception as e:
-                logger.error(f"Fallback model error: {str(e)}")
-                yield f"Error with fallback model: {str(e)}"
-        
-        if memory and not isinstance(content, Exception):
-            try:
-                memory.chat_memory.add_user_message(content)
-            except Exception as e:
-                logger.error(f"Error updating memory: {str(e)}")
-                
+            raise ValueError(f"Unsupported model: {model_name}")
+            
     except Exception as e:
-        logger.error(f"General error in generate_response: {str(e)}")
-        yield f"Error: {str(e)}"
+        logger.error(f"Error generating response: {str(e)}")
+        yield f"I apologize, but I encountered an error: {str(e)}"
 
+        
 async def generate_related_questions(message: str, model_name: str) -> list:
     try:
         model = get_model_instance(model_name)
@@ -261,22 +192,6 @@ async def generate_related_questions(message: str, model_name: str) -> list:
             text_response = response.choices[0].message.content
         elif model_name.startswith("groq"):
             response = model.chat.completions.create(
-                model=model_name,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            text_response = response.choices[0].message.content
-        elif model_name == "gemini-1.5-flash":
-            response = genai.GenerativeModel('gemini-1.5-flash').generate_content(prompt)
-            text_response = response.text
-        elif model_name == "claude-3-5-haiku-20241022":
-            response = await claude_client.messages.create(
-                model=model_name,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=1000
-            )
-            text_response = response.content[0].text
-        elif model_name == "accounts/fireworks/models/llama-v2-70b":
-            response = fireworks.ChatCompletion.create(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt}]
             )
