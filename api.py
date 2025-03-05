@@ -9,6 +9,11 @@ from dotenv import load_dotenv
 from uuid import uuid4
 import time
 from starlette.background import BackgroundTask
+# Import the React Agent
+from react_agent.graph import graph
+from react_agent.configuration import Configuration
+from langchain_core.messages import HumanMessage, AIMessage
+import asyncio
 
 # Load environment variables
 load_dotenv()
@@ -184,6 +189,157 @@ async def voice_chat_endpoint(request: Request, session_id: str = Depends(get_se
             "success": False,
             "detail": str(e)
         }, status_code=500)
+
+@app.post("/agent-chat")
+async def agent_chat_endpoint(request: Request, session_id: str = Depends(get_session_id)):
+    try:
+        # Update session last accessed time
+        sessions[session_id]['last_accessed'] = time.time()
+        
+        body = await request.json()
+        message = body.get('message', '').strip()
+        
+        if not message:
+            raise HTTPException(status_code=400, detail="No message provided")
+        
+        logger.info(f"Agent chat request from session {session_id}: {message[:50]}...")
+        
+        # Format the message for the agent
+        formatted_message = [("user", message)]
+        
+        # Setup agent response streaming
+        async def response_generator():
+            try:
+                # Call the React agent
+                result = await graph.ainvoke(
+                    {"messages": formatted_message},
+                    {"configurable": {"system_prompt": "You are a helpful AI assistant."}}
+                )
+                
+                # Get the final AI message
+                final_message = result["messages"][-1]
+                if hasattr(final_message, "content"):
+                    content = final_message.content
+                    if isinstance(content, str):
+                        yield f"data: {json.dumps({'content': content})}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'content': str(content)})}\n\n"
+                
+                yield "data: [DONE]\n\n"
+            except Exception as e:
+                logger.error(f"Agent error: {str(e)}")
+                yield f"data: Error: {str(e)}\n\n"
+                yield "data: [DONE]\n\n"
+        
+        return StreamingResponse(
+            response_generator(),
+            media_type='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'Content-Type': 'text/event-stream',
+                'X-Accel-Buffering': 'no'
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Agent chat error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    try:
+        # Cancel previous request if header is present
+        if request.headers.get('X-Cancel-Previous') == 'true':
+            previous_request = sessions[session_id].get('current_request')
+            if previous_request:
+                sessions[session_id]['cancelled'] = True
+
+        body = await request.json()
+        message = body.get('message', '').strip()
+        model = body.get('model', 'gemini-1.5-flash').strip()
+        request_id = request.headers.get('X-Request-ID')
+
+        sessions[session_id]['current_request'] = request_id
+        sessions[session_id]['cancelled'] = False
+
+        if not message:
+            raise HTTPException(status_code=400, detail="No message provided")
+
+        # Stream the response from React Agent
+        async def generate():
+            try:
+                # Configure the agent - ADD PREFIX to model
+                config = {
+                    "configurable": {
+                        "model": f"custom/{model}",  # Add the 'custom/' prefix
+                        "max_search_results": 5
+                    }
+                }
+
+                # Set up input for the agent
+                input_state = {"messages": [HumanMessage(content=message)]}
+                
+                # Get the agent response as a stream
+                streaming_response = ""
+                
+                try:
+                    # Create a task to run the agent
+                    agent_task = asyncio.create_task(graph.ainvoke(input_state, config))
+                    
+                    # Initialize a flag to track if we're done
+                    is_done = False
+                    
+                    # Stream intermediate updates from the agent
+                    while not is_done:
+                        # Check if request has been cancelled
+                        if sessions[session_id].get('cancelled', False):
+                            agent_task.cancel()
+                            break
+                        
+                        # Get current state if task is done
+                        if agent_task.done():
+                            try:
+                                result = agent_task.result()
+                                # Get the final AI message
+                                for msg in reversed(result["messages"]):
+                                    if isinstance(msg, AIMessage) and not msg.tool_calls:
+                                        streaming_response = msg.content
+                                        break
+                                is_done = True
+                            except Exception as e:
+                                logger.error(f"Error getting agent result: {str(e)}")
+                                streaming_response = f"Error: {str(e)}"
+                                is_done = True
+                        
+                        # Format as SSE and yield
+                        response_json = json.dumps({"response": streaming_response})
+                        yield f"data: {response_json}\n\n"
+                        
+                        # Short pause before next check
+                        if not is_done:
+                            await asyncio.sleep(0.1)
+                except Exception as e:
+                    logger.error(f"Agent execution error: {str(e)}")
+                    streaming_response = f"Error with agent: {str(e)}"
+                    response_json = json.dumps({"response": streaming_response})
+                    yield f"data: {response_json}\n\n"
+                
+                # Send final DONE message
+                yield "data: [DONE]\n\n"
+                
+            except Exception as e:
+                logger.error(f"Error in agent generate: {str(e)}")
+                error_json = json.dumps({"error": str(e)})
+                yield f"data: {error_json}\n\n"
+                yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream"
+        )
+
+    except Exception as e:
+        logger.error(f"Agent chat endpoint error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/related-questions")
 async def related_questions_endpoint(request: Request):

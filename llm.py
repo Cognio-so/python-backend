@@ -10,18 +10,14 @@ from langchain.memory import ConversationBufferMemory
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
 
 # Debug: Print API keys
-logger.debug(f"Google API Key: {os.getenv('GOOGLE_API_KEY')}")
-logger.debug(f"OpenAI API Key: {os.getenv('OPENAI_API_KEY')}")
-logger.debug(f"Anthropic API Key: {os.getenv('ANTHROPIC_API_KEY')}")
-logger.debug(f"Fireworks API Key: {os.getenv('FIREWORKS_API_KEY')}")
-logger.debug(f"Groq API Key: {os.getenv('GROQ_API_KEY')}")
+logger.info("API Keys loaded successfully")
 
 # Configure Gemini AI
 genai.configure(api_key=os.getenv('GOOGLE_API_KEY').strip())
@@ -124,24 +120,28 @@ async def generate_response(messages, model_name, session_id=None):
 
         elif model_name == "claude-3-haiku-20240307":
             response = await model.messages.create(
-                model="claude-3-haiku-20240307",  # Explicitly use this cheaper model
+                model="claude-3-haiku-20240307",
                 messages=messages,
                 max_tokens=1000,
                 stream=True
             )
             
             async for chunk in response:
-                if hasattr(chunk, 'delta') and chunk.delta.text:
+                # Handle different event types from Anthropic streaming
+                if chunk.type == "content_block_delta" and hasattr(chunk.delta, 'text'):
                     buffer += chunk.delta.text
                     if any(buffer.endswith(p) for p in PUNCTUATION_MARKS) and len(buffer.strip()) >= MIN_CHUNK_SIZE:
                         yield buffer
                         buffer = ""
-            if buffer.strip():
-                yield buffer
+                elif chunk.type == "message_delta" or chunk.type == "message_stop":
+                    # End of message, yield remaining buffer if any
+                    if buffer.strip():
+                        yield buffer
+                        buffer = ""
 
         elif model_name == "llama-v3p1-8b-instruct":
             response = model.ChatCompletion.create(
-                model="accounts/fireworks/models/llama-v3p1-8b-instruct",  # Full Fireworks model path
+                model="accounts/fireworks/models/llama-v3p1-8b-instruct",
                 messages=messages,
                 stream=True
             )
@@ -162,7 +162,6 @@ async def generate_response(messages, model_name, session_id=None):
         logger.error(f"Error generating response: {str(e)}")
         yield f"I apologize, but I encountered an error: {str(e)}"
 
-        
 async def generate_related_questions(message: str, model_name: str) -> list:
     try:
         model = get_model_instance(model_name)
