@@ -4,7 +4,7 @@ import logging
 import google.generativeai as genai
 from openai import AsyncOpenAI
 import anthropic
-import fireworks.client as fireworks
+from groq import AsyncGroq  # Updated to use Groq instead of fireworks
 import groq
 from langchain.memory import ConversationBufferMemory
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
@@ -28,11 +28,11 @@ openai_client = AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY').strip())
 # Configure Anthropic (Claude)
 claude_client = anthropic.AsyncAnthropic(api_key=os.getenv('ANTHROPIC_API_KEY').strip())
 
-# Configure Fireworks
-fireworks.api_key = os.getenv('FIREWORKS_API_KEY').strip()
+# Configure Groq (replacing Fireworks)
+groq_client = AsyncGroq(api_key=os.getenv('GROQ_API_KEY').strip())  # Use AsyncGroq for async support
 
-# Configure Groq
-groq_client = groq.Client(api_key=os.getenv('GROQ_API_KEY').strip())
+# Configure Groq (non-async for related questions)
+groq_sync_client = groq.Client(api_key=os.getenv('GROQ_API_KEY').strip())
 
 # Add a global conversation memory dictionary to store memories for different sessions
 conversation_memories = {}
@@ -55,8 +55,8 @@ def get_model_instance(model_name):
         return openai_client
     elif model_name == "claude-3-haiku-20240307":
         return claude_client
-    elif model_name == "accounts/fireworks/models/llama-v3p3-70b-instruct":  # Match frontend ID
-        return fireworks
+    elif model_name == "llama3-70b-8192":  # Updated to Groq's free Llama model
+        return groq_client
     else:
         raise ValueError(f"Unsupported model: {model_name}")
 
@@ -127,33 +127,28 @@ async def generate_response(messages, model_name, session_id=None):
             )
             
             async for chunk in response:
-                # Handle different event types from Anthropic streaming
                 if chunk.type == "content_block_delta" and hasattr(chunk.delta, 'text'):
                     buffer += chunk.delta.text
                     if any(buffer.endswith(p) for p in PUNCTUATION_MARKS) and len(buffer.strip()) >= MIN_CHUNK_SIZE:
                         yield buffer
                         buffer = ""
                 elif chunk.type == "message_delta" or chunk.type == "message_stop":
-                    # End of message, yield remaining buffer if any
                     if buffer.strip():
                         yield buffer
                         buffer = ""
 
-        elif model_name == "accounts/fireworks/models/llama-v3p3-70b-instruct":
-            response = model.chat.completions.create(
-                model="accounts/fireworks/models/llama-v3p3-70b-instruct",
+        elif model_name == "llama3-70b-8192":  # Updated to Groq's free Llama model
+            response = await model.chat.completions.create(
+                model="llama3-70b-8192",
                 messages=messages,
                 stream=True,
                 max_tokens=16384,
                 top_p=1,
-                top_k=40,
-                presence_penalty=0,
-                frequency_penalty=0,
                 temperature=0.6
             )
             
-            for chunk in response:
-                if hasattr(chunk, 'choices') and chunk.choices[0].delta.content:
+            async for chunk in response:
+                if chunk.choices[0].delta.content:
                     buffer += chunk.choices[0].delta.content
                     if any(buffer.endswith(p) for p in PUNCTUATION_MARKS) and len(buffer.strip()) >= MIN_CHUNK_SIZE:
                         yield buffer
@@ -189,14 +184,14 @@ async def generate_related_questions(message: str, model_name: str) -> list:
                 max_tokens=1000
             )
             text_response = response.content[0].text
-        elif model_name == "accounts/fireworks/models/llama-v3p3-70b-instruct":
-            response = model.chat.completions.create(
-                model=model_name,
+        elif model_name == "llama3-70b-8192":  # Updated to Groq's free Llama model
+            response = groq_sync_client.chat.completions.create(
+                model="llama3-70b-8192",
                 messages=[{"role": "user", "content": prompt}]
             )
             text_response = response.choices[0].message.content
         elif model_name.startswith("groq"):
-            response = model.chat.completions.create(
+            response = groq_sync_client.chat.completions.create(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt}]
             )

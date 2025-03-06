@@ -75,9 +75,8 @@ async def chat_endpoint(request: Request, session_id: str = Depends(get_session_
     'gpt-4o-mini': 'gpt-4o-mini',
     'gemini-1.5-flash': 'gemini-1.5-flash',
     'claude-3-haiku-20240307': 'claude-3-haiku-20240307',
-    'llama-v3-7b': 'llama-v3-7b',
-    'accounts/fireworks/models/llama-v3p3-70b-instruct': 'accounts/fireworks/models/llama-v3p3-70b-instruct'
-    }
+    'llama3-70b-8192': 'llama3-70b-8192',  # Add this line
+}
 
         model = model_mapping.get(model, model)  # Get the mapped model, or the original if not found
         request_id = request.headers.get('X-Request-ID')
