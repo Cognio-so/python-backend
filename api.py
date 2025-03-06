@@ -75,7 +75,7 @@ async def chat_endpoint(request: Request, session_id: str = Depends(get_session_
             'gpt-4o-mini': 'gpt-4o-mini',
             'gemini-1.5-flash': 'gemini-1.5-flash',
             'claude-3-haiku-20240307': 'claude-3-haiku-20240307',
-            'llama-v3p1-8b-instruct': 'llama-v3p1-8b-instruct',
+            'llama-v3-7b': 'llama-v3-7b',
         }
 
         model = model_mapping.get(model, model)  # Get the mapped model, or the original if not found

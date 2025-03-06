@@ -50,12 +50,12 @@ def get_or_create_memory(session_id):
 
 def get_model_instance(model_name):
     if model_name == "gemini-1.5-flash":
-        return genai.GenerativeModel('gemini-1.5-flash')  # Updated to cheapest Gemini
+        return genai.GenerativeModel('gemini-1.5-flash')
     elif model_name == "gpt-4o-mini":
         return openai_client
     elif model_name == "claude-3-haiku-20240307":
         return claude_client
-    elif model_name == "llama-v3p1-8b-instruct":
+    elif model_name == "llama-v3-7b":  # Updated model name
         return fireworks
     else:
         raise ValueError(f"Unsupported model: {model_name}")
@@ -139,15 +139,16 @@ async def generate_response(messages, model_name, session_id=None):
                         yield buffer
                         buffer = ""
 
-        elif model_name == "llama-v3p1-8b-instruct":
+        elif model_name == "llama-v3-7b":
             response = model.ChatCompletion.create(
-                model="accounts/fireworks/models/llama-v3p1-8b-instruct",
+                model="accounts/fireworks/models/llama-v3p1-8b-instruct",  # Updated model ID
                 messages=messages,
                 stream=True
             )
             
-            async for chunk in response:
-                if chunk.choices[0].delta.content:
+            # Handle non-async streaming for Fireworks
+            for chunk in response:
+                if hasattr(chunk.choices[0], 'delta') and chunk.choices[0].delta.content:
                     buffer += chunk.choices[0].delta.content
                     if any(buffer.endswith(p) for p in PUNCTUATION_MARKS) and len(buffer.strip()) >= MIN_CHUNK_SIZE:
                         yield buffer
