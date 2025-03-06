@@ -141,7 +141,7 @@ async def generate_response(messages, model_name, session_id=None):
 
         elif model_name == "llama-v3-7b":
             response = model.ChatCompletion.create(
-                model="accounts/fireworks/models/llama-v3p1-8b-instruct",  # Updated model ID
+                model="accounts/fireworks/models/llama-v3p3-70b-instruct",  # Updated model ID
                 messages=messages,
                 stream=True
             )
