@@ -118,25 +118,23 @@ async def generate_response(messages, model_name, session_id=None):
             if buffer.strip():
                 yield buffer
 
-        elif model_name == "claude-3-haiku-20240307":
-            response = await model.messages.create(
-                model="claude-3-haiku-20240307",
-                messages=messages,
-                max_tokens=1000,
-                stream=True
-            )
-            
-            async for chunk in response:
-                if chunk.type == "content_block_delta" and hasattr(chunk.delta, 'text'):
-                    buffer += chunk.delta.text
-                    if any(buffer.endswith(p) for p in PUNCTUATION_MARKS) and len(buffer.strip()) >= MIN_CHUNK_SIZE:
-                        yield buffer
-                        buffer = ""
-                elif chunk.type == "message_delta" or chunk.type == "message_stop":
-                    if buffer.strip():
-                        yield buffer
-                        buffer = ""
-
+        elif model_name == "llama3-70b-8192":  # Using Groq for Llama model
+    response = await model.chat.completions.create(
+        model="llama3-70b-8192",  # This should match exactly what Groq expects
+        messages=[{"role": role, "content": content} for role, content in 
+                 [("system", "You are a helpful assistant.")]  + 
+                 [(msg["role"], msg["content"]) for msg in messages]],
+        stream=True
+    )
+    
+    async for chunk in response:
+        if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+            buffer += chunk.choices[0].delta.content
+            if any(buffer.endswith(p) for p in PUNCTUATION_MARKS) and len(buffer.strip()) >= MIN_CHUNK_SIZE:
+                yield buffer
+                buffer = ""
+    if buffer.strip():
+        yield buffer
         elif model_name == "llama3-70b-8192":  # Updated to Groq's free Llama model
             response = await model.chat.completions.create(
                 model="llama3-70b-8192",
