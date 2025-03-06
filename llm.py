@@ -47,6 +47,7 @@ def get_or_create_memory(session_id):
             return_messages=True
         )
     return conversation_memories[session_id]
+
 def get_model_instance(model_name):
     if model_name == "gemini-1.5-flash":
         return genai.GenerativeModel('gemini-1.5-flash')
@@ -54,7 +55,7 @@ def get_model_instance(model_name):
         return openai_client
     elif model_name == "claude-3-haiku-20240307":
         return claude_client
-    elif model_name in ["llama-v3-7b", "accounts/fireworks/models/llama-v3p3-70b-instruct"]:  # Add the full ID
+    elif model_name == "accounts/fireworks/models/llama-v3p3-70b-instruct":  # Match frontend ID
         return fireworks
     else:
         raise ValueError(f"Unsupported model: {model_name}")
@@ -138,16 +139,21 @@ async def generate_response(messages, model_name, session_id=None):
                         yield buffer
                         buffer = ""
 
-        elif model_name == "llama-v3-7b":
-            response = model.ChatCompletion.create(
-                model="accounts/fireworks/models/llama-v3p3-70b-instruct",  # Updated model ID
+        elif model_name == "accounts/fireworks/models/llama-v3p3-70b-instruct":
+            response = model.chat.completions.create(
+                model="accounts/fireworks/models/llama-v3p3-70b-instruct",
                 messages=messages,
-                stream=True
+                stream=True,
+                max_tokens=16384,
+                top_p=1,
+                top_k=40,
+                presence_penalty=0,
+                frequency_penalty=0,
+                temperature=0.6
             )
             
-            # Handle non-async streaming for Fireworks
             for chunk in response:
-                if hasattr(chunk.choices[0], 'delta') and chunk.choices[0].delta.content:
+                if hasattr(chunk, 'choices') and chunk.choices[0].delta.content:
                     buffer += chunk.choices[0].delta.content
                     if any(buffer.endswith(p) for p in PUNCTUATION_MARKS) and len(buffer.strip()) >= MIN_CHUNK_SIZE:
                         yield buffer
@@ -183,8 +189,8 @@ async def generate_related_questions(message: str, model_name: str) -> list:
                 max_tokens=1000
             )
             text_response = response.content[0].text
-        elif model_name.startswith("fireworks"):
-            response = model.ChatCompletion.create(
+        elif model_name == "accounts/fireworks/models/llama-v3p3-70b-instruct":
+            response = model.chat.completions.create(
                 model=model_name,
                 messages=[{"role": "user", "content": prompt}]
             )
