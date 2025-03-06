@@ -47,7 +47,6 @@ def get_or_create_memory(session_id):
             return_messages=True
         )
     return conversation_memories[session_id]
-
 def get_model_instance(model_name):
     if model_name == "gemini-1.5-flash":
         return genai.GenerativeModel('gemini-1.5-flash')
@@ -55,7 +54,7 @@ def get_model_instance(model_name):
         return openai_client
     elif model_name == "claude-3-haiku-20240307":
         return claude_client
-    elif model_name == "llama-v3-7b":  # Updated model name
+    elif model_name in ["llama-v3-7b", "accounts/fireworks/models/llama-v3p3-70b-instruct"]:  # Add the full ID
         return fireworks
     else:
         raise ValueError(f"Unsupported model: {model_name}")
