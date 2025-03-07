@@ -53,9 +53,9 @@ def get_model_instance(model_name):
         return genai.GenerativeModel('gemini-1.5-flash')
     elif model_name == "gpt-4o-mini":
         return openai_client
-    elif model_name == "claude-3-haiku-20240307":
+    elif model_name == "claude-3-haiku-20240307":  # Updated model ID
         return claude_client
-    elif model_name == "llama3-70b-8192":  # Updated to Groq's free Llama model
+    elif model_name == "llama3-70b-8192":
         return groq_client
     else:
         raise ValueError(f"Unsupported model: {model_name}")
@@ -119,35 +119,42 @@ async def generate_response(messages, model_name, session_id=None):
                 yield buffer
 
         elif model_name == "llama3-70b-8192":  # Using Groq for Llama model
-    response = await model.chat.completions.create(
-        model="llama3-70b-8192",  # This should match exactly what Groq expects
-        messages=[{"role": role, "content": content} for role, content in 
-                 [("system", "You are a helpful assistant.")]  + 
-                 [(msg["role"], msg["content"]) for msg in messages]],
-        stream=True
-    )
-    
-    async for chunk in response:
-        if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-            buffer += chunk.choices[0].delta.content
-            if any(buffer.endswith(p) for p in PUNCTUATION_MARKS) and len(buffer.strip()) >= MIN_CHUNK_SIZE:
-                yield buffer
-                buffer = ""
-    if buffer.strip():
-        yield buffer
-        elif model_name == "llama3-70b-8192":  # Updated to Groq's free Llama model
             response = await model.chat.completions.create(
-                model="llama3-70b-8192",
-                messages=messages,
-                stream=True,
-                max_tokens=16384,
-                top_p=1,
-                temperature=0.6
+                model="llama3-70b-8192",  # This should match exactly what Groq expects
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant."},
+                    *[{"role": msg["role"], "content": msg["content"]} for msg in messages]
+                ],
+                stream=True
             )
-            
+
             async for chunk in response:
-                if chunk.choices[0].delta.content:
+                if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
                     buffer += chunk.choices[0].delta.content
+                    if any(buffer.endswith(p) for p in PUNCTUATION_MARKS) and len(buffer.strip()) >= MIN_CHUNK_SIZE:
+                        yield buffer
+                        buffer = ""
+            if buffer.strip():
+                yield buffer
+
+        elif model_name == "claude-3-haiku-20240307":  # Updated model ID
+            # Separate system prompt from messages
+            system_prompt = "You are a helpful assistant."
+            user_messages = []
+            for msg in messages:
+                if msg['role'] != 'system':
+                    user_messages.append({"role": msg["role"], "content": msg["content"]})
+
+            response = await model.messages.create(
+                model=model_name,
+                system=system_prompt,  # Pass system prompt separately
+                messages=user_messages, # Pass only user/assistant messages
+                max_tokens=1024,
+                stream=True
+            )
+            async for chunk in response:
+                if chunk.type == "content_block_delta":
+                    buffer += chunk.delta.text
                     if any(buffer.endswith(p) for p in PUNCTUATION_MARKS) and len(buffer.strip()) >= MIN_CHUNK_SIZE:
                         yield buffer
                         buffer = ""
