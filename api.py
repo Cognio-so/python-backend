@@ -14,6 +14,9 @@ from react_agent.graph import graph
 from react_agent.configuration import Configuration
 from langchain_core.messages import HumanMessage, AIMessage
 import asyncio
+# Import the Cognio Agent
+from agt.agent import graph, VaaniState
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 # Load environment variables
 load_dotenv()
@@ -310,9 +313,16 @@ async def agent_chat_endpoint(request: Request, session_id: str = Depends(get_se
                                 streaming_response = f"Error: {str(e)}"
                                 is_done = True
                         
-                        # Format as SSE and yield
-                        response_json = json.dumps({"response": streaming_response})
-                        yield f"data: {response_json}\n\n"
+                        # Special handling for image URLs to prevent streaming them character by character
+                        if streaming_response and "Generated image:" in streaming_response:
+                            # Send the complete URL at once instead of streaming it
+                            is_done = True
+                            response_json = json.dumps({"response": streaming_response})
+                            yield f"data: {response_json}\n\n"
+                        elif streaming_response:
+                            # Normal text streaming for non-image responses
+                            response_json = json.dumps({"response": streaming_response})
+                            yield f"data: {response_json}\n\n"
                         
                         # Short pause before next check
                         if not is_done:
@@ -361,6 +371,122 @@ async def related_questions_endpoint(request: Request):
 
     except Exception as e:
         logger.error(f"Related questions error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/cognio-agent")
+async def cognio_agent_endpoint(request: Request, session_id: str = Depends(get_session_id)):
+    try:
+        # Update session last accessed time
+        sessions[session_id]['last_accessed'] = time.time()
+        
+        body = await request.json()
+        message = body.get('message', '').strip()
+        model = body.get('model', 'llama-3.3-70b-versatile').strip()
+        file_url = body.get('file_url', '')
+        web_search_enabled = body.get('web_search_enabled', True)
+        deep_research = body.get('deep_research', False)
+        request_id = request.headers.get('X-Request-ID')
+
+        if not message:
+            raise HTTPException(status_code=400, detail="No message provided")
+        
+        logger.info(f"Cognio agent request from session {session_id}: {message[:50]}...")
+        
+        # Store the current request ID in the session
+        previous_request = sessions[session_id].get('current_request')
+        sessions[session_id]['current_request'] = request_id
+        sessions[session_id]['cancelled'] = False
+        
+        # Stream the response from Cognio Agent
+        async def generate():
+            try:
+                # Configure the agent state based on VaaniState schema
+                input_state = VaaniState(
+                    messages=[HumanMessage(content=message)],
+                    summary="",
+                    file_url=file_url,
+                    web_search_enabled=web_search_enabled,
+                    deep_research=deep_research,
+                    agent_name="",
+                    extra_question="",
+                    user_token="valid_token"  # Using default token from agent.py
+                )
+                
+                # Configuration for agent
+                config = {"configurable": {"thread_id": session_id}}
+                
+                # Create a task to run the agent
+                agent_task = asyncio.create_task(graph.ainvoke(input_state, config))
+                
+                # Stream intermediate updates
+                is_done = False
+                streaming_response = ""
+                
+                while not is_done:
+                    # Check if request has been cancelled
+                    if sessions[session_id].get('cancelled', False):
+                        agent_task.cancel()
+                        break
+                    
+                    # Get current state if task is done
+                    if agent_task.done():
+                        try:
+                            result = agent_task.result()
+                            # Get the final AI message
+                            for msg in result["messages"]:
+                                if isinstance(msg, AIMessage):
+                                    streaming_response = msg.content
+                                    break
+                            is_done = True
+                        except Exception as e:
+                            logger.error(f"Error getting agent result: {str(e)}")
+                            streaming_response = f"Error: {str(e)}"
+                            is_done = True
+                    
+                    # Special handling for image URLs to prevent streaming them character by character
+                    if streaming_response and "Generated image:" in streaming_response:
+                        # Send the complete URL at once instead of streaming it
+                        is_done = True
+                        response_json = json.dumps({"response": streaming_response})
+                        yield f"data: {response_json}\n\n"
+                    elif streaming_response:
+                        # Normal text streaming for non-image responses
+                        response_json = json.dumps({"response": streaming_response})
+                        yield f"data: {response_json}\n\n"
+                    
+                    # Short pause before next check
+                    if not is_done:
+                        await asyncio.sleep(0.1)
+                
+                # Send final response one more time to ensure client has it
+                if streaming_response:
+                    response_json = json.dumps({"response": streaming_response})
+                    yield f"data: {response_json}\n\n"
+                
+                # Send final DONE message
+                yield "data: [DONE]\n\n"
+                
+            except Exception as e:
+                logger.error(f"Error in cognio agent: {str(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+                error_json = json.dumps({"error": str(e)})
+                yield f"data: {error_json}\n\n"
+                yield "data: [DONE]\n\n"
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'Content-Type': 'text/event-stream',
+                'X-Accel-Buffering': 'no'
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Cognio agent error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
