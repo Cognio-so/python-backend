@@ -176,7 +176,7 @@ async def web_search_agent_node(state: VaaniState) -> VaaniState:
     
     try:
         # Adjust search parameters based on deep_research flag
-        max_results = 8 if deep_research else 5
+        max_results = 7 if deep_research else 3
         search_depth = "advanced" if deep_research else "basic"
         
         # Perform web search with adjusted parameters

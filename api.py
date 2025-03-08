@@ -1,13 +1,21 @@
+import sys
+import os
+from pathlib import Path
+
+# Add src directory to Python path
+src_path = Path(__file__).parent / "src"
+if src_path.exists():
+    sys.path.append(str(src_path.absolute()))
+
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from llm import generate_response, generate_related_questions
 import json
 import logging
-import os
+import time
 from dotenv import load_dotenv
 from uuid import uuid4
-import time
 from starlette.background import BackgroundTask
 # Import the React Agent
 from react_agent.graph import graph as react_graph
@@ -22,8 +30,10 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 load_dotenv()
 
 # Verify required API keys are present
-if not os.getenv('GOOGLE_API_KEY') or not os.getenv('OPENAI_API_KEY') or not os.getenv('ANTHROPIC_API_KEY'):
-    raise ValueError("One or more API keys are missing in environment variables!")
+required_keys = ['GOOGLE_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GROQ_API_KEY', 'REPLICATE_API_KEY', 'TAVILY_API_KEY']
+missing_keys = [key for key in required_keys if not os.getenv(key)]
+if missing_keys:
+    logger.warning(f"Missing API keys: {', '.join(missing_keys)}. Some functionality may be limited.")
 
 app = FastAPI()
 
@@ -207,7 +217,7 @@ async def agent_chat_endpoint(request: Request, session_id: str = Depends(get_se
         
         logger.info(f"Agent chat request from session {session_id}: {message[:50]}...")
         
-        # Format the message for the agent
+        # Add more robust error handling
         formatted_message = [("user", message)]
         
         # Setup agent response streaming
@@ -231,7 +241,9 @@ async def agent_chat_endpoint(request: Request, session_id: str = Depends(get_se
                 yield "data: [DONE]\n\n"
             except Exception as e:
                 logger.error(f"Agent error: {str(e)}")
-                yield f"data: Error: {str(e)}\n\n"
+                import traceback
+                logger.error(traceback.format_exc())
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
                 yield "data: [DONE]\n\n"
         
         return StreamingResponse(
@@ -470,7 +482,7 @@ async def cognio_agent_endpoint(request: Request, session_id: str = Depends(get_
                 logger.error(f"Error in cognio agent: {str(e)}")
                 import traceback
                 logger.error(traceback.format_exc())
-                error_json = json.dumps({"error": str(e)})
+                error_json = json.dumps({"error": f"Agent error: {str(e)}"})
                 yield f"data: {error_json}\n\n"
                 yield "data: [DONE]\n\n"
 

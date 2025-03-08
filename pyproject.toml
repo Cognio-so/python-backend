@@ -1,39 +1,41 @@
 [project]
-name = "react-agent"
-version = "0.0.1"
-description = "Starter template for making a custom Reasoning and Action agent (using tool calling) in LangGraph."
+name = "cognio-agent"
+version = "0.1.0"
+description = "Cognio Agent with React and AGT implementations"
 authors = [
-    { name = "William Fu-Hinthorn", email = "13333726+hinthornw@users.noreply.github.com" },
+    { name = "Your Name", email = "your.email@example.com" }
 ]
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = [
-    "langgraph>=0.2.6",
+    "fastapi>=0.109.0",
+    "uvicorn>=0.27.0",
+    "python-dotenv>=1.0.1",
+    "starlette>=0.36.0",
+    "pydantic>=2.0.0",
+    "langchain>=0.2.14",
     "langchain-openai>=0.1.22",
     "langchain-anthropic>=0.1.23",
-    "langchain>=0.2.14",
     "langchain-fireworks>=0.1.7",
-    "python-dotenv>=1.0.1",
     "langchain-community>=0.2.17",
-    "tavily-python>=0.4.0",
-    "fastapi",
-    "uvicorn",
-    "google-generativeai",
-    "openai",
-    "anthropic",
-    "fireworks-ai",
-    "groq",
-    "tenacity",
+    "langchain-core>=0.1.27",
+    "langgraph>=0.2.6",
     "langchain-groq>=0.0.1",
+    "google-generativeai>=0.3.0",
+    "openai>=1.12.0",
+    "anthropic>=0.18.1",
+    "fireworks-ai>=0.9.0",
+    "groq>=0.4.2",
+    "tavily-python>=0.4.0",
     "replicate>=0.22.0",
+    "tenacity>=8.2.0",
     "requests>=2.31.0",
     "streamlit>=1.24.0",
 ]
 
-
 [project.optional-dependencies]
-dev = ["mypy>=1.11.1", "ruff>=0.6.1", "langgraph-cli[inmem]>=0.1.71"]
+dev = ["mypy>=1.11.1", "ruff>=0.6.1", "pytest>=8.0.0"]
 
 [build-system]
 requires = ["setuptools>=73.0.0", "wheel"]
