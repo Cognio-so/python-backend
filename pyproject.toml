@@ -25,6 +25,10 @@ dependencies = [
     "fireworks-ai",
     "groq",
     "tenacity",
+    "langchain-groq>=0.0.1",
+    "replicate>=0.22.0",
+    "requests>=2.31.0",
+    "streamlit>=1.24.0",
 ]
 
 

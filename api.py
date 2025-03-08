@@ -10,12 +10,12 @@ from uuid import uuid4
 import time
 from starlette.background import BackgroundTask
 # Import the React Agent
-from react_agent.graph import graph
+from react_agent.graph import graph as react_graph
 from react_agent.configuration import Configuration
 from langchain_core.messages import HumanMessage, AIMessage
 import asyncio
 # Import the Cognio Agent
-from agt.agent import graph, VaaniState
+from agt.agent import graph as cognio_graph, VaaniState
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 # Load environment variables
@@ -214,7 +214,7 @@ async def agent_chat_endpoint(request: Request, session_id: str = Depends(get_se
         async def response_generator():
             try:
                 # Call the React agent
-                result = await graph.ainvoke(
+                result = await react_graph.ainvoke(
                     {"messages": formatted_message},
                     {"configurable": {"system_prompt": "You are a helpful AI assistant."}}
                 )
@@ -286,7 +286,7 @@ async def agent_chat_endpoint(request: Request, session_id: str = Depends(get_se
                 
                 try:
                     # Create a task to run the agent
-                    agent_task = asyncio.create_task(graph.ainvoke(input_state, config))
+                    agent_task = asyncio.create_task(react_graph.ainvoke(input_state, config))
                     
                     # Initialize a flag to track if we're done
                     is_done = False
@@ -416,7 +416,7 @@ async def cognio_agent_endpoint(request: Request, session_id: str = Depends(get_
                 config = {"configurable": {"thread_id": session_id}}
                 
                 # Create a task to run the agent
-                agent_task = asyncio.create_task(graph.ainvoke(input_state, config))
+                agent_task = asyncio.create_task(cognio_graph.ainvoke(input_state, config))
                 
                 # Stream intermediate updates
                 is_done = False

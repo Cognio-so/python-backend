@@ -13,6 +13,7 @@ langchain-fireworks>=0.1.7
 langchain-community>=0.2.17
 langchain-core
 langgraph>=0.2.6
+langchain-groq>=0.0.1
 
 # External API clients
 google-generativeai
@@ -21,6 +22,11 @@ anthropic
 fireworks-ai
 groq
 tavily-python>=0.4.0
+replicate>=0.22.0
+requests>=2.31.0
 
 # Utilities
 tenacity
+
+# Optional UI components
+streamlit>=1.24.0
