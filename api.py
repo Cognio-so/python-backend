@@ -30,7 +30,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 load_dotenv()
 
 # Verify required API keys are present
-required_keys = ['GOOGLE_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GROQ_API_KEY', 'REPLICATE_API_KEY', 'TAVILY_API_KEY']
+required_keys = ['GEMINI_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GROQ_API_KEY', 'REPLICATE_API_KEY', 'TAVILY_API_KEY']
 missing_keys = [key for key in required_keys if not os.getenv(key)]
 if missing_keys:
     logger.warning(f"Missing API keys: {', '.join(missing_keys)}. Some functionality may be limited.")
